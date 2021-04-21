@@ -17,6 +17,9 @@
 const AggregateMenu = imports.ui.main.panel.statusArea.aggregateMenu;
 const Clutter = imports.gi.Clutter;
 const Indicator = imports.ui.status.brightness.Indicator;
+const PanelMenu = imports.ui.panelMenu;
+const PopupMenu = imports.ui.popupMenu;
+const Slider = imports.ui.slider;
 const GLib = imports.gi.GLib;
 const GObject = imports.gi.GObject;
 const Lang = imports.lang;
@@ -39,23 +42,47 @@ const Logger = Me.imports.logger;
 
 var softBrightnessExtension = null;
 
-const ModifiedBrightnessIndicator = (function() {
-    let cls = class ModifiedBrightnessIndicator extends Indicator {
-	_setExtension(ext) {
-	    this._softBrightnessExtension = ext;
-	}
+const SoftBrightnessIndicator = (function () {
+	let cls = class SoftBrightnessIndicator extends PanelMenu.SystemIndicator {
+    _setExtension(ext) {
+      this._softBrightnessExtension = ext;
+    }
 
-	_sliderChanged(slider) {
+    _init() {
+      super._init();
+
+      this._item = new PopupMenu.PopupBaseMenuItem({ activate: false });
+      this.menu.addMenuItem(this._item);
+
+      this._slider = new Slider.Slider(0);
+      this._sliderChangedId = this._slider.connect(
+        "notify::value",
+        this._sliderChanged.bind(this)
+      );
+      this._slider.accessible_name = _("Soft brightness");
+
+      let icon = new St.Icon({
+        icon_name: "dialog-information-symbolic",
+        style_class: "popup-menu-icon",
+      });
+      this._item.add(icon);
+      this._item.add_child(this._slider);
+      this._item.connect("button-press-event", (actor, event) => {
+        return this._slider.startDragging(event);
+      });
+      this._item.connect("key-press-event", (actor, event) => {
+        return this._slider.emit("key-press-event", event);
+      });
+      this._item.connect("scroll-event", (actor, event) => {
+        return this._slider.emit("scroll-event", event);
+      });
+    }
+
+    _sliderChanged() {
 	    let value = this._slider.value;
 	    this._softBrightnessExtension._logger.log_debug("_sliderChanged(slide, "+value+")");
 	    this._softBrightnessExtension._storeBrightnessLevel(value);
-	}
-
-	_sync() {
-	    this._softBrightnessExtension._logger.log_debug("_sync()");
-	    this._softBrightnessExtension._on_brightness_change(false);
-	    this.setSliderValue(this._softBrightnessExtension._getBrightnessLevel());
-	}
+    }
 
 	setSliderValue(value) {
 	    if (this._slider.setValue !== undefined) {
@@ -107,7 +134,6 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	this._currentBrightnessSettingChangedConnection = null;
 	this._monitorsSettingChangedConnection          = null;
 	this._builtinMonitorSettingChangedConnection    = null;
-	this._useBacklightSettingChangedConnection      = null;
 	this._preventUnredirectChangedConnection        = null;
 
 	// Set/destroyed by _enableMonitor2ing/_disableMonitor2ing
@@ -234,21 +260,16 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	    this._delayedMouseCloning = null;
 	}));
 
-	this._brightnessIndicator = new ModifiedBrightnessIndicator();
+	this._brightnessIndicator = new SoftBrightnessIndicator();
+	this._logger.log('current brightness '+ this._getBrightnessLevel());
 	this._brightnessIndicator._setExtension(this);
-	if (! this._swapMenu(AggregateMenu._brightness, this._brightnessIndicator)) {
-	    this._logger.log_debug('_enable(): couldn\'t swap brightness indicator in aggregate menu');
+	this._brightnessIndicator.setSliderValue(this._getBrightnessLevel())
+	if (! this._addMenu(AggregateMenu._brightness, this._brightnessIndicator)) {
+	    this._logger.log_debug('_enable(): couldn\'t add soft brightness indicator in aggregate menu');
 	}
 
 	this._enableMonitor2ing();
 	this._enableSettingsMonitoring();
-
-	// If we use the backlight and the Brightness proxy is null, it's still connecting and we'll get a _sync later.
-	if (! this._settings.get_boolean('use-backlight') || this._brightnessIndicator._proxy.Brightness != null) {
-	    let curBrightness = this._getBrightnessLevel();
-	    this._brightnessIndicator.setSliderValue(curBrightness);
-	    this._brightnessIndicator._sliderChanged(this._brightnessIndicator._slider);
-	}
 
 	this._enableScreenshotPatch();
     }
@@ -257,7 +278,7 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	this._logger.log_debug('_disable()');
 
 	let standardIndicator = new imports.ui.status.brightness.Indicator();
-	this._swapMenu(this._brightnessIndicator, standardIndicator);
+	this._delMenu(this._brightnessIndicator);
 	this._brightnessIndicator = null;
 
 	this._disableMonitor2ing();
@@ -290,27 +311,43 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	this._actorGroup = null;
     }
 
-    _swapMenu(oldIndicator, newIndicator) {
+    _addMenu(hardBrightnessIndicator, softBrightnessIndicator) {
 	let menuItems = AggregateMenu.menu._getMenuItems();
 	let menuIndex = null;
 	for (let i = 0; i < menuItems.length; i++) {
-	    if (oldIndicator.menu == menuItems[i]) {
-		menuIndex = i;
+		if (hardBrightnessIndicator.menu == menuItems[i]) {
+		menuIndex = i+1;
 		break;
-	    }
+		}
 	}
 	if (menuIndex == null) {
-	    this._logger.log('_swapMenu(): Cannot find brightness indicator');
-	    return false;
+		this._logger.log('_addMenu(): Cannot find brightness indicator');
+		return false;
 	}
-	this._logger.log_debug('_swapMenu(): Replacing brightness menu item at index '+menuIndex);
-	menuItems.splice(menuIndex, 1);
-	oldIndicator._proxy.run_dispose();
-	oldIndicator.menu.destroy();
-	AggregateMenu.menu.addMenuItem(newIndicator.menu, menuIndex);
-	AggregateMenu._brightness = newIndicator;
+	this._logger.log_debug('_addMenu(): Adding soft brightness menu item at index '+menuIndex);
+	AggregateMenu.menu.addMenuItem(softBrightnessIndicator.menu, menuIndex);
 	return true;
-    }
+	}
+
+    _delMenu(softBrightnessIndicator) {
+	let menuItems = AggregateMenu.menu._getMenuItems();
+	let menuIndex = null;
+	for (let i = 0; i < menuItems.length; i++) {
+		if (softBrightnessIndicator.menu == menuItems[i]) {
+		menuIndex = i;
+		break;
+		}
+	}
+	if (menuIndex == null) {
+		this._logger.log('_delMenu(): Cannot find soft brightness indicator');
+		return false;
+	}
+	this._logger.log_debug('_delMenu(): removing soft brightness menu item at index '+menuIndex);
+	menuItems.splice(menuIndex, 1);
+	softBrightnessIndicator._proxy.run_dispose();
+	softBrightnessIndicator.menu.destroy();
+	return true;
+	}
 
     _restackOverlays() {
 	if (this._actorGroup.raise_top != undefined) {
@@ -465,30 +502,16 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
     }
 
     // Utility functions to manage the stored brightness value.
-    // If using the backlight, then we use the indicator as the brightness value store, which is linked to gsd.
-    // If not using the backlight, the brightness is stored in the extension setting.
+    // the brightness is stored in the extension setting.
     _storeBrightnessLevel(value) {
-	if (this._settings.get_boolean('use-backlight') && this._brightnessIndicator._proxy.Brightness >= 0) {
-	    let convertedBrightness = Math.min(100, Math.round(value * 100.0));
-	    this._logger.log_debug('_storeBrightnessLevel('+value+') by proxy -> '+convertedBrightness);
-	    this._brightnessIndicator._proxy.Brightness = convertedBrightness;
-	} else {
 	    this._logger.log_debug('_storeBrightnessLevel('+value+') by setting');
 	    this._settings.set_double('current-brightness', value);
-	}
     }
 
     _getBrightnessLevel() {
-	let brightness = this._brightnessIndicator._proxy.Brightness;
-	if (this._settings.get_boolean('use-backlight') && brightness >= 0) {
-	    let convertedBrightness = brightness / 100.0;
-	    this._logger.log_debug('_getBrightnessLevel() by proxy = '+convertedBrightness+' <- '+brightness);
-	    return convertedBrightness;
-	} else {
-	    brightness = this._settings.get_double('current-brightness');
+		let brightness = this._settings.get_double('current-brightness');
 	    this._logger.log_debug('_getBrightnessLevel() by setting = '+brightness);
 	    return brightness;
-	}
     }
 
     // Settings monitoring
@@ -502,7 +525,6 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	this._currentBrightnessSettingChangedConnection = this._settings.connect('changed::current-brightness', brightnessChange);
 	this._monitorsSettingChangedConnection          = this._settings.connect('changed::monitors',           forcedBrightnessChange);
 	this._builtinMonitorSettingChangedConnection    = this._settings.connect('changed::builtin-monitor',    forcedBrightnessChange);
-	this._useBacklightSettingChangedConnection      = this._settings.connect('changed::use-backlight',      this._on_use_backlight_change.bind(this));
 	this._preventUnredirectChangedConnection        = this._settings.connect('changed::prevent-unredirect', forcedBrightnessChange);
     }
 
@@ -513,14 +535,12 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	this._settings.disconnect(this._currentBrightnessSettingChangedConnection);
 	this._settings.disconnect(this._monitorsSettingChangedConnection);
 	this._settings.disconnect(this._builtinMonitorSettingChangedConnection);
-	this._settings.disconnect(this._useBacklightSettingChangedConnection);
 	this._settings.disconnect(this._preventUnredirectChangedConnection);
 
 	this._minBrightnessSettingChangedConnection     = null;
 	this._currentBrightnessSettingChangedConnection = null;
 	this._monitorsSettingChangedConnection          = null;
 	this._builtinMonitorSettingChangedConnection    = null;
-	this._useBacklightSettingChangedConnection      = null;
 	this._preventUnredirectChangedConnection        = null;
     }
 
@@ -531,9 +551,7 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	this._logger.log_debug("_on_brightness_change: current-brightness="+curBrightness+", min-brightness="+minBrightness);
 	if (curBrightness < minBrightness) {
 	    curBrightness = minBrightness;
-	    if (! this._settings.get_boolean('use-backlight')) {
 		this._brightnessIndicator.setSliderValue(curBrightness);
-	    }
 	    this._storeBrightnessLevel(minBrightness);
 	    return;
 	}
@@ -548,15 +566,6 @@ const SoftBrightnessExtension = class SoftBrightnessExtension {
 	    if (this._overlays.length == 0) {
 		this._stopCloningShowMouse();
 	    }
-	}
-    }
-
-    _on_use_backlight_change() {
-	this._logger.log_debug('_on_use_backlight_change()');
-	if (this._settings.get_boolean('use-backlight')) {
-	    this._storeBrightnessLevel(this._settings.get_double('current-brightness'));
-	} else if (this._brightnessIndicator._proxy.Brightness != null && this._brightnessIndicator._proxy.Brightness >= 0) {
-	    this._storeBrightnessLevel(this._brightnessIndicator._proxy.Brightness / 100.0);
 	}
     }
 

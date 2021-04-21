@@ -10,11 +10,6 @@
     <value value="2" nick="always"/>
   </enum>
   <schema id="org.gnome.shell.extensions.soft-brightness" path="/org/gnome/shell/extensions/soft-brightness/">
-    <key name="use-backlight" type="b">
-      <default>false</default>
-      <summary>Use backlight control.</summary>
-      <description>Use the regular backlight control.</description>
-    </key>
     <key name="monitors" enum="org.gnome.shell.extensions.soft-brightness.monitors">
       <default>"all"</default>
       <summary>Monitors.</summary>

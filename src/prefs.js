@@ -81,17 +81,6 @@ const SoftBrightnessSettings = GObject.registerClass(class SoftBrightnessSetting
 
 	ypos += 1;
 
-	descr = _(this._settings.settings_schema.get_key('use-backlight').get_description());
-	this.enabled_label = new Gtk.Label({label: _("Use backlight control:"), halign: Gtk.Align.START});
-	this.enabled_label.set_tooltip_text(descr);
-	this.enabled_control = new Gtk.Switch({halign: Gtk.Align.END});
-	this.enabled_control.set_tooltip_text(descr);
-	this.attach(this.enabled_label,   1, ypos, 1, 1);
-	this.attach(this.enabled_control, 2, ypos, 1, 1);
-	this._settings.bind('use-backlight', this.enabled_control, 'active', Gio.SettingsBindFlags.DEFAULT);
-
-	ypos += 1;
-
 	descr = _(this._settings.settings_schema.get_key('monitors').get_description());
 	this.monitors_label = new Gtk.Label({label: _("Monitor(s):"), halign: Gtk.Align.START});
 	this.monitors_label.set_tooltip_text(descr);
